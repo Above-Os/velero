@@ -1,18 +1,3 @@
-/*
-Copyright The Velero Contributors.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-	http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-*/
 package resourcepolicies
 
 import (
@@ -62,14 +47,14 @@ type Policies struct {
 
 func unmarshalResourcePolicies(yamlData *string) (*resourcePolicies, error) {
 	resPolicies := &resourcePolicies{}
-	err := decodeStruct(strings.NewReader(*yamlData), resPolicies)
-	if err != nil {
+	if err := decodeStruct(strings.NewReader(*yamlData), resPolicies); err != nil {
 		return nil, fmt.Errorf("failed to decode yaml data into resource policies  %v", err)
+	} else {
+		return resPolicies, nil
 	}
-	return resPolicies, nil
 }
 
-func (p *Policies) buildPolicy(resPolicies *resourcePolicies) error {
+func (policies *Policies) buildPolicy(resPolicies *resourcePolicies) error {
 	for _, vp := range resPolicies.VolumePolicies {
 		con, err := unmarshalVolConditions(vp.Conditions)
 		if err != nil {
@@ -79,19 +64,18 @@ func (p *Policies) buildPolicy(resPolicies *resourcePolicies) error {
 		if err != nil {
 			return errors.WithStack(err)
 		}
-		var volP volPolicy
-		volP.action = vp.Action
-		volP.conditions = append(volP.conditions, &capacityCondition{capacity: *volCap})
-		volP.conditions = append(volP.conditions, &storageClassCondition{storageClass: con.StorageClass})
-		volP.conditions = append(volP.conditions, &nfsCondition{nfs: con.NFS})
-		volP.conditions = append(volP.conditions, &csiCondition{csi: con.CSI})
-		volP.conditions = append(volP.conditions, &volumeTypeCondition{volumeTypes: con.VolumeTypes})
-		p.volumePolicies = append(p.volumePolicies, volP)
+		var p volPolicy
+		p.action = vp.Action
+		p.conditions = append(p.conditions, &capacityCondition{capacity: *volCap})
+		p.conditions = append(p.conditions, &storageClassCondition{storageClass: con.StorageClass})
+		p.conditions = append(p.conditions, &nfsCondition{nfs: con.NFS})
+		p.conditions = append(p.conditions, &csiCondition{csi: con.CSI})
+		policies.volumePolicies = append(policies.volumePolicies, p)
 	}
 
 	// Other resource policies
 
-	p.version = resPolicies.Version
+	policies.version = resPolicies.Version
 	return nil
 }
 
@@ -148,7 +132,7 @@ func GetResourcePoliciesFromConfig(cm *v1.ConfigMap) (*Policies, error) {
 		return nil, fmt.Errorf("could not parse config from nil configmap")
 	}
 	if len(cm.Data) != 1 {
-		return nil, fmt.Errorf("illegal resource policies %s/%s configmap", cm.Namespace, cm.Name)
+		return nil, fmt.Errorf("illegal resource policies %s/%s configmap", cm.Name, cm.Namespace)
 	}
 
 	var yamlData string

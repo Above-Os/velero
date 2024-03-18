@@ -53,6 +53,7 @@ func (b *PodVolumeBackupBuilder) ObjectMeta(opts ...ObjectMetaOpt) *PodVolumeBac
 	for _, opt := range opts {
 		opt(b.object)
 	}
+
 	return b
 }
 
@@ -95,11 +96,5 @@ func (b *PodVolumeBackupBuilder) PodNamespace(ns string) *PodVolumeBackupBuilder
 // Volume sets the name of the volume associated with this PodVolumeBackup.
 func (b *PodVolumeBackupBuilder) Volume(volume string) *PodVolumeBackupBuilder {
 	b.object.Spec.Volume = volume
-	return b
-}
-
-// UploaderType sets the type of uploader to use for this PodVolumeBackup.
-func (b *PodVolumeBackupBuilder) UploaderType(uploaderType string) *PodVolumeBackupBuilder {
-	b.object.Spec.UploaderType = uploaderType
 	return b
 }

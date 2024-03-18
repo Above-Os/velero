@@ -130,6 +130,7 @@ func (c VeleroConfig) Colorized() bool {
 	}
 
 	return colorized
+
 }
 
 func (c VeleroConfig) CACertFile() string {

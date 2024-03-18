@@ -32,6 +32,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	velerov1api "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
 	"github.com/vmware-tanzu/velero/pkg/label"
@@ -73,17 +74,13 @@ func (r *BackupRepoReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&velerov1api.BackupRepository{}).
-		WatchesRawSource(s, nil).
-		Watches(&velerov1api.BackupStorageLocation{}, kube.EnqueueRequestsFromMapUpdateFunc(r.invalidateBackupReposForBSL),
-			builder.WithPredicates(
-				// When BSL updates, check if the backup repositories need to be invalidated
-				kube.NewUpdateEventPredicate(r.needInvalidBackupRepo),
-				// When BSL is created, invalidate any backup repositories that reference it
-				kube.NewCreateEventPredicate(func(client.Object) bool { return true }))).
+		Watches(s, nil).
+		Watches(&source.Kind{Type: &velerov1api.BackupStorageLocation{}}, kube.EnqueueRequestsFromMapUpdateFunc(r.invalidateBackupReposForBSL),
+			builder.WithPredicates(kube.NewUpdateEventPredicate(r.needInvalidBackupRepo))).
 		Complete(r)
 }
 
-func (r *BackupRepoReconciler) invalidateBackupReposForBSL(ctx context.Context, bslObj client.Object) []reconcile.Request {
+func (r *BackupRepoReconciler) invalidateBackupReposForBSL(bslObj client.Object) []reconcile.Request {
 	bsl := bslObj.(*velerov1api.BackupStorageLocation)
 
 	list := &velerov1api.BackupRepositoryList{}
@@ -93,21 +90,18 @@ func (r *BackupRepoReconciler) invalidateBackupReposForBSL(ctx context.Context, 
 		}).AsSelector(),
 	}
 	if err := r.List(context.TODO(), list, options); err != nil {
-		r.logger.WithField("BSL", bsl.Name).WithError(err).Error("unable to list BackupRepositories")
+		r.logger.WithField("BSL", bsl.Name).WithError(err).Error("unable to list BackupRepositorys")
 		return []reconcile.Request{}
 	}
 
 	for i := range list.Items {
 		r.logger.WithField("BSL", bsl.Name).Infof("Invalidating Backup Repository %s", list.Items[i].Name)
-		if err := r.patchBackupRepository(context.Background(), &list.Items[i], repoNotReady("re-establish on BSL change or create")); err != nil {
-			r.logger.WithField("BSL", bsl.Name).WithError(err).Errorf("fail to patch BackupRepository %s", list.Items[i].Name)
-		}
+		r.patchBackupRepository(context.Background(), &list.Items[i], repoNotReady("re-establish on BSL change"))
 	}
 
 	return []reconcile.Request{}
 }
 
-// needInvalidBackupRepo returns true if the BSL's storage type, bucket, prefix, CACert, or config has changed
 func (r *BackupRepoReconciler) needInvalidBackupRepo(oldObj client.Object, newObj client.Object) bool {
 	oldBSL := oldObj.(*velerov1api.BackupStorageLocation)
 	newBSL := newObj.(*velerov1api.BackupStorageLocation)
@@ -257,17 +251,17 @@ func (r *BackupRepoReconciler) getRepositoryMaintenanceFrequency(req *velerov1ap
 	if r.maintenanceFrequency > 0 {
 		r.logger.WithField("frequency", r.maintenanceFrequency).Info("Set user defined maintenance frequency")
 		return r.maintenanceFrequency
-	}
-
-	frequency, err := r.repositoryManager.DefaultMaintenanceFrequency(req)
-	if err != nil || frequency <= 0 {
-		r.logger.WithError(err).WithField("returned frequency", frequency).Warn("Failed to get maitanance frequency, use the default one")
-		frequency = defaultMaintainFrequency
 	} else {
-		r.logger.WithField("frequency", frequency).Info("Set maintenance according to repository suggestion")
-	}
+		frequency, err := r.repositoryManager.DefaultMaintenanceFrequency(req)
+		if err != nil || frequency <= 0 {
+			r.logger.WithError(err).WithField("returned frequency", frequency).Warn("Failed to get maitanance frequency, use the default one")
+			frequency = defaultMaintainFrequency
+		} else {
+			r.logger.WithField("frequency", frequency).Info("Set matainenance according to repository suggestion")
+		}
 
-	return frequency
+		return frequency
+	}
 }
 
 // ensureRepo calls repo manager's PrepareRepo to ensure the repo is ready for use.

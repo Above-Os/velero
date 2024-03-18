@@ -18,7 +18,6 @@ package provider
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"net/url"
 	"path"
@@ -26,7 +25,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kopia/kopia/repo"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 
@@ -48,9 +46,11 @@ type unifiedRepoProvider struct {
 
 // this func is assigned to a package-level variable so it can be
 // replaced when unit-testing
+var getAzureCredentials = repoconfig.GetAzureCredentials
 var getS3Credentials = repoconfig.GetS3Credentials
 var getGCPCredentials = repoconfig.GetGCPCredentials
 var getS3BucketRegion = repoconfig.GetAWSBucketRegion
+var getAzureStorageDomain = repoconfig.GetAzureStorageDomain
 
 type localFuncTable struct {
 	getStorageVariables   func(*velerov1api.BackupStorageLocation, string, string) (map[string]string, error)
@@ -66,7 +66,7 @@ const (
 	repoOpDescMaintain = "repo maintenance"
 	repoOpDescForget   = "forget"
 
-	repoConnectDesc = "unified repo"
+	repoConnectDesc = "unfied repo"
 )
 
 // NewUnifiedRepoProvider creates the service provider for Unified Repo
@@ -189,13 +189,10 @@ func (urp *unifiedRepoProvider) PrepareRepo(ctx context.Context, param RepoParam
 		log.Debug("Repo has already been initialized remotely")
 		return nil
 	}
-	if !errors.Is(err, repo.ErrRepositoryNotInitialized) {
-		return errors.Wrap(err, "error to connect to backup repo")
-	}
 
 	err = urp.repoService.Init(ctx, *repoOption, true)
 	if err != nil {
-		return errors.Wrap(err, "error to create backup repo")
+		return errors.Wrap(err, "error to init backup repo")
 	}
 
 	log.Debug("Prepare repo complete")
@@ -302,11 +299,6 @@ func (urp *unifiedRepoProvider) Forget(ctx context.Context, snapshotID string, p
 	err = bkRepo.DeleteManifest(ctx, udmrepo.ID(snapshotID))
 	if err != nil {
 		return errors.Wrap(err, "error to delete manifest")
-	}
-
-	err = bkRepo.Flush(ctx)
-	if err != nil {
-		return errors.Wrap(err, "error to flush repo")
 	}
 
 	log.Debug("Forget snapshot complete")
@@ -430,17 +422,19 @@ func getStorageCredentials(backupLocation *velerov1api.BackupStorageLocation, cr
 		if err != nil {
 			return map[string]string{}, errors.Wrap(err, "error get s3 credentials")
 		}
+		result[udmrepo.StoreOptionS3KeyId] = credValue.AccessKeyID
+		result[udmrepo.StoreOptionS3Provider] = credValue.ProviderName
+		result[udmrepo.StoreOptionS3SecretKey] = credValue.SecretAccessKey
+		result[udmrepo.StoreOptionS3Token] = credValue.SessionToken
 
-		if credValue != nil {
-			result[udmrepo.StoreOptionS3KeyID] = credValue.AccessKeyID
-			result[udmrepo.StoreOptionS3Provider] = credValue.Source
-			result[udmrepo.StoreOptionS3SecretKey] = credValue.SecretAccessKey
-			result[udmrepo.StoreOptionS3Token] = credValue.SessionToken
-		}
 	case repoconfig.AzureBackend:
-		if config[repoconfig.CredentialsFileKey] != "" {
-			result[repoconfig.CredentialsFileKey] = config[repoconfig.CredentialsFileKey]
+		storageAccount, accountKey, err := getAzureCredentials(config)
+		if err != nil {
+			return map[string]string{}, errors.Wrap(err, "error get azure credentials")
 		}
+		result[udmrepo.StoreOptionAzureStorageAccount] = storageAccount
+		result[udmrepo.StoreOptionAzureKey] = accountKey
+
 	case repoconfig.GCPBackend:
 		result[udmrepo.StoreOptionCredentialFile] = getGCPCredentials(config)
 	}
@@ -473,48 +467,46 @@ func getStorageVariables(backupLocation *velerov1api.BackupStorageLocation, repo
 	region := config["region"]
 
 	if backendType == repoconfig.AWSBackend {
-		s3URL := config["s3Url"]
-		disableTLS := false
+		s3Url := config["s3Url"]
+		disableTls := false
 
 		var err error
-		if s3URL == "" {
-			if region == "" {
-				region, err = getS3BucketRegion(bucket)
-				if err != nil {
-					return map[string]string{}, errors.Wrap(err, "error get s3 bucket region")
-				}
+		if s3Url == "" {
+			region, err = getS3BucketRegion(bucket)
+			if err != nil {
+				return map[string]string{}, errors.Wrap(err, "error get s3 bucket region")
 			}
 
-			s3URL = fmt.Sprintf("s3-%s.amazonaws.com", region)
-			disableTLS = false
+			s3Url = fmt.Sprintf("s3-%s.amazonaws.com", region)
+			disableTls = false
 		} else {
-			url, err := url.Parse(s3URL)
+			url, err := url.Parse(s3Url)
 			if err != nil {
-				return map[string]string{}, errors.Wrapf(err, "error to parse s3Url %s", s3URL)
+				return map[string]string{}, errors.Wrapf(err, "error to parse s3Url %s", s3Url)
 			}
 
 			if url.Path != "" && url.Path != "/" {
-				return map[string]string{}, errors.Errorf("path is not expected in s3Url %s", s3URL)
+				return map[string]string{}, errors.Errorf("path is not expected in s3Url %s", s3Url)
 			}
 
-			s3URL = url.Host
-			disableTLS = url.Scheme == "http"
+			s3Url = url.Host
+			disableTls = (url.Scheme == "http")
 		}
 
-		result[udmrepo.StoreOptionS3Endpoint] = strings.Trim(s3URL, "/")
-		result[udmrepo.StoreOptionS3DisableTLSVerify] = config["insecureSkipTLSVerify"]
-		result[udmrepo.StoreOptionS3DisableTLS] = strconv.FormatBool(disableTLS)
+		result[udmrepo.StoreOptionS3Endpoint] = strings.Trim(s3Url, "/")
+		result[udmrepo.StoreOptionS3DisableTlsVerify] = config["insecureSkipTLSVerify"]
+		result[udmrepo.StoreOptionS3DisableTls] = strconv.FormatBool(disableTls)
 	} else if backendType == repoconfig.AzureBackend {
-		for k, v := range config {
-			result[k] = v
+		domain, err := getAzureStorageDomain(config)
+		if err != nil {
+			return map[string]string{}, errors.Wrapf(err, "error to get azure storage domain")
 		}
+
+		result[udmrepo.StoreOptionAzureDomain] = domain
 	}
 
 	result[udmrepo.StoreOptionOssBucket] = bucket
 	result[udmrepo.StoreOptionPrefix] = prefix
-	if backupLocation.Spec.ObjectStorage != nil && backupLocation.Spec.ObjectStorage.CACert != nil {
-		result[udmrepo.StoreOptionCACert] = base64.StdEncoding.EncodeToString(backupLocation.Spec.ObjectStorage.CACert)
-	}
 	result[udmrepo.StoreOptionOssRegion] = strings.Trim(region, "/")
 	result[udmrepo.StoreOptionFsPath] = config["fspath"]
 

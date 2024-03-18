@@ -33,7 +33,7 @@ import (
 )
 
 const (
-	delimiterValue = ","
+	DELIMITER_VALUE = ","
 )
 
 // ChangeImageNameAction updates a deployment or Pod's image name
@@ -102,6 +102,7 @@ func (a *ChangeImageNameAction) Execute(input *velero.RestoreItemActionExecuteIn
 		return nil, errors.Errorf("object was of unexpected type %T", input.Item)
 	}
 	if obj.GetKind() == "Pod" {
+
 		err = a.replaceImageName(obj, config, "spec", "containers")
 		if err != nil {
 			a.logger.Infof("replace image name meet error: %v", err)
@@ -113,6 +114,7 @@ func (a *ChangeImageNameAction) Execute(input *velero.RestoreItemActionExecuteIn
 			a.logger.Infof("replace image name meet error: %v", err)
 			return nil, errors.Wrap(err, "error getting item's spec.containers")
 		}
+
 	} else if obj.GetKind() == "CronJob" {
 		//handle containers
 		err = a.replaceImageName(obj, config, "spec", "jobTemplate", "spec", "template", "spec", "containers")
@@ -126,6 +128,7 @@ func (a *ChangeImageNameAction) Execute(input *velero.RestoreItemActionExecuteIn
 			a.logger.Infof("replace image name meet error: %v", err)
 			return nil, errors.Wrap(err, "error getting item's spec.containers")
 		}
+
 	} else {
 		//handle containers
 		err = a.replaceImageName(obj, config, "spec", "template", "spec", "containers")
@@ -145,6 +148,7 @@ func (a *ChangeImageNameAction) Execute(input *velero.RestoreItemActionExecuteIn
 }
 
 func (a *ChangeImageNameAction) replaceImageName(obj *unstructured.Unstructured, config *corev1.ConfigMap, filed ...string) error {
+
 	log := a.logger.WithFields(map[string]interface{}{
 		"kind":      obj.GetKind(),
 		"namespace": obj.GetNamespace(),
@@ -153,19 +157,19 @@ func (a *ChangeImageNameAction) replaceImageName(obj *unstructured.Unstructured,
 	needUpdateObj := false
 	containers, _, err := unstructured.NestedSlice(obj.UnstructuredContent(), filed...)
 	if err != nil {
-		log.Infof("UnstructuredConverter meet error: %v", err)
+		a.logger.Infof("UnstructuredConverter meet error: %v", err)
 		return errors.Wrap(err, "error getting item's spec.containers")
 	}
 	if len(containers) == 0 {
 		return nil
 	}
 	for i, container := range containers {
-		log.Infoln("container:", container)
+		a.logger.Infoln("container:", container)
 		if image, ok := container.(map[string]interface{})["image"]; ok {
 			imageName := image.(string)
 			if exists, newImageName, err := a.isImageReplaceRuleExist(log, imageName, config); exists && err == nil {
 				needUpdateObj = true
-				log.Infof("Updating item's image from %s to %s", imageName, newImageName)
+				a.logger.Infof("Updating item's image from %s to %s", imageName, newImageName)
 				container.(map[string]interface{})["image"] = newImageName
 				containers[i] = container
 			}
@@ -194,13 +198,13 @@ func (a *ChangeImageNameAction) isImageReplaceRuleExist(log *logrus.Entry, oldIm
 	//"case3":"abc:test,edf:test"
 	//"case4":"1.1.1.1:5000/abc:test,2.2.2.2:3000/edf:test"
 	for _, row := range cm.Data {
-		if !strings.Contains(row, delimiterValue) {
+		if !strings.Contains(row, DELIMITER_VALUE) {
 			continue
 		}
-		if strings.Contains(oldImageName, strings.TrimSpace(row[0:strings.Index(row, delimiterValue)])) && len(row[strings.Index(row, delimiterValue):]) > len(delimiterValue) {
+		if strings.Contains(oldImageName, strings.TrimSpace(row[0:strings.Index(row, DELIMITER_VALUE)])) && len(row[strings.Index(row, DELIMITER_VALUE):]) > len(DELIMITER_VALUE) {
 			log.Infoln("match specific case:", row)
-			oldImagePart := strings.TrimSpace(row[0:strings.Index(row, delimiterValue)])
-			newImagePart := strings.TrimSpace(row[strings.Index(row, delimiterValue)+len(delimiterValue):])
+			oldImagePart := strings.TrimSpace(row[0:strings.Index(row, DELIMITER_VALUE)])
+			newImagePart := strings.TrimSpace(row[strings.Index(row, DELIMITER_VALUE)+len(DELIMITER_VALUE):])
 			newImageName = strings.Replace(oldImageName, oldImagePart, newImagePart, -1)
 			return true, newImageName, nil
 		}

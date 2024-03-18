@@ -77,7 +77,7 @@ func (f FakeV1beta1ClusterRoleBindingLister) List() ([]ClusterRoleBinding, error
 
 func TestServiceAccountActionAppliesTo(t *testing.T) {
 	// Instantiating the struct directly since using
-	// NewServiceAccountAction requires a full Kubernetes clientset
+	// NewServiceAccountAction requires a full kubernetes clientset
 	a := &ServiceAccountAction{}
 
 	actual, err := a.AppliesTo()

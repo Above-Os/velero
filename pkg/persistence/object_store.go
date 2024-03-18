@@ -23,20 +23,17 @@ import (
 	"strings"
 	"time"
 
-	snapshotv1api "github.com/kubernetes-csi/external-snapshotter/client/v7/apis/volumesnapshot/v1"
+	snapshotv1api "github.com/kubernetes-csi/external-snapshotter/client/v4/apis/volumesnapshot/v1"
 
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
-	"k8s.io/apimachinery/pkg/runtime/serializer"
 	kerrors "k8s.io/apimachinery/pkg/util/errors"
 
 	"github.com/vmware-tanzu/velero/internal/credentials"
-	internalVolume "github.com/vmware-tanzu/velero/internal/volume"
 	velerov1api "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
+	"github.com/vmware-tanzu/velero/pkg/generated/clientset/versioned/scheme"
 	"github.com/vmware-tanzu/velero/pkg/itemoperation"
 	"github.com/vmware-tanzu/velero/pkg/plugin/velero"
-	"github.com/vmware-tanzu/velero/pkg/util"
-	"github.com/vmware-tanzu/velero/pkg/util/results"
 	"github.com/vmware-tanzu/velero/pkg/volume"
 )
 
@@ -52,8 +49,7 @@ type BackupInfo struct {
 	BackupResourceList,
 	CSIVolumeSnapshots,
 	CSIVolumeSnapshotContents,
-	CSIVolumeSnapshotClasses,
-	BackupVolumeInfo io.Reader
+	CSIVolumeSnapshotClasses io.Reader
 }
 
 // BackupStore defines operations for creating, retrieving, and deleting
@@ -75,8 +71,6 @@ type BackupStore interface {
 	GetCSIVolumeSnapshots(name string) ([]*snapshotv1api.VolumeSnapshot, error)
 	GetCSIVolumeSnapshotContents(name string) ([]*snapshotv1api.VolumeSnapshotContent, error)
 	GetCSIVolumeSnapshotClasses(name string) ([]*snapshotv1api.VolumeSnapshotClass, error)
-	GetBackupVolumeInfos(name string) ([]*internalVolume.VolumeInfo, error)
-	GetRestoreResults(name string) (map[string]results.Result, error)
 
 	// BackupExists checks if the backup metadata file exists in object storage.
 	BackupExists(bucket, backupName string) (bool, error)
@@ -275,7 +269,6 @@ func (s *objectBackupStore) PutBackup(info BackupInfo) error {
 		s.layout.getCSIVolumeSnapshotContentsKey(info.Name): info.CSIVolumeSnapshotContents,
 		s.layout.getCSIVolumeSnapshotClassesKey(info.Name):  info.CSIVolumeSnapshotClasses,
 		s.layout.getBackupResultsKey(info.Name):             info.BackupResults,
-		s.layout.getBackupVolumeInfoKey(info.Name):          info.BackupVolumeInfo,
 	}
 
 	for key, reader := range backupObjs {
@@ -309,9 +302,7 @@ func (s *objectBackupStore) GetBackupMetadata(name string) (*velerov1api.Backup,
 		return nil, errors.WithStack(err)
 	}
 
-	codecFactory := serializer.NewCodecFactory(util.VeleroScheme)
-
-	decoder := codecFactory.UniversalDecoder(velerov1api.SchemeGroupVersion)
+	decoder := scheme.Codecs.UniversalDecoder(velerov1api.SchemeGroupVersion)
 	obj, _, err := decoder.Decode(data, nil, nil)
 	if err != nil {
 		return nil, errors.WithStack(err)
@@ -438,6 +429,7 @@ func (s *objectBackupStore) GetCSIVolumeSnapshotClasses(name string) ([]*snapsho
 		return nil, err
 	}
 	return csiVSClasses, nil
+
 }
 
 func (s *objectBackupStore) GetCSIVolumeSnapshots(name string) ([]*snapshotv1api.VolumeSnapshot, error) {
@@ -495,44 +487,6 @@ func (s *objectBackupStore) GetPodVolumeBackups(name string) ([]*velerov1api.Pod
 	}
 
 	return podVolumeBackups, nil
-}
-
-func (s *objectBackupStore) GetBackupVolumeInfos(name string) ([]*internalVolume.VolumeInfo, error) {
-	volumeInfos := make([]*internalVolume.VolumeInfo, 0)
-
-	res, err := tryGet(s.objectStore, s.bucket, s.layout.getBackupVolumeInfoKey(name))
-	if err != nil {
-		return volumeInfos, err
-	}
-	if res == nil {
-		return volumeInfos, nil
-	}
-	defer res.Close()
-
-	if err := decode(res, &volumeInfos); err != nil {
-		return volumeInfos, err
-	}
-
-	return volumeInfos, nil
-}
-
-func (s *objectBackupStore) GetRestoreResults(name string) (map[string]results.Result, error) {
-	results := make(map[string]results.Result)
-
-	res, err := tryGet(s.objectStore, s.bucket, s.layout.getRestoreResultsKey(name))
-	if err != nil {
-		return results, err
-	}
-	if res == nil {
-		return results, nil
-	}
-	defer res.Close()
-
-	if err := decode(res, &results); err != nil {
-		return results, err
-	}
-
-	return results, nil
 }
 
 func (s *objectBackupStore) GetBackupContents(name string) (io.ReadCloser, error) {
@@ -631,8 +585,6 @@ func (s *objectBackupStore) GetDownloadURL(target velerov1api.DownloadTarget) (s
 		return s.objectStore.CreateSignedURL(s.bucket, s.layout.getCSIVolumeSnapshotContentsKey(target.Name), DownloadURLTTL)
 	case velerov1api.DownloadTargetKindBackupResults:
 		return s.objectStore.CreateSignedURL(s.bucket, s.layout.getBackupResultsKey(target.Name), DownloadURLTTL)
-	case velerov1api.DownloadTargetKindBackupVolumeInfos:
-		return s.objectStore.CreateSignedURL(s.bucket, s.layout.getBackupVolumeInfoKey(target.Name), DownloadURLTTL)
 	default:
 		return "", errors.Errorf("unsupported download target kind %q", target.Kind)
 	}

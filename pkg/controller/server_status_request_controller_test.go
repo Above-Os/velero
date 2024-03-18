@@ -63,8 +63,8 @@ var _ = Describe("Server Status Request Reconciler", func() {
 			// Setup reconciler
 			Expect(velerov1api.AddToScheme(scheme.Scheme)).To(Succeed())
 			r := NewServerStatusRequestReconciler(
-				context.Background(),
 				fake.NewClientBuilder().WithScheme(scheme.Scheme).WithObjects(test.req).Build(),
+				context.Background(),
 				test.reqPluginLister,
 				testclocks.NewFakeClock(now),
 				velerotest.NewLogger(),

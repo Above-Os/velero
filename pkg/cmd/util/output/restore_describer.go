@@ -31,12 +31,12 @@ import (
 
 	velerov1api "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
 	"github.com/vmware-tanzu/velero/pkg/cmd/util/downloadrequest"
+	clientset "github.com/vmware-tanzu/velero/pkg/generated/clientset/versioned"
 	"github.com/vmware-tanzu/velero/pkg/itemoperation"
-	"github.com/vmware-tanzu/velero/pkg/util/boolptr"
 	"github.com/vmware-tanzu/velero/pkg/util/results"
 )
 
-func DescribeRestore(ctx context.Context, kbClient kbclient.Client, restore *velerov1api.Restore, podVolumeRestores []velerov1api.PodVolumeRestore, details bool, insecureSkipTLSVerify bool, caCertFile string) string {
+func DescribeRestore(ctx context.Context, kbClient kbclient.Client, restore *velerov1api.Restore, podVolumeRestores []velerov1api.PodVolumeRestore, details bool, veleroClient clientset.Interface, insecureSkipTLSVerify bool, caCertFile string) string {
 	return Describe(func(d *Describer) {
 		d.DescribeMetadata(restore.ObjectMeta)
 
@@ -46,12 +46,6 @@ func DescribeRestore(ctx context.Context, kbClient kbclient.Client, restore *vel
 			phase = velerov1api.RestorePhaseNew
 		}
 		phaseString := string(phase)
-
-		// Append "Deleting" to phaseString if deletionTimestamp is marked.
-		if !restore.DeletionTimestamp.IsZero() {
-			phaseString += " (Deleting)"
-		}
-
 		switch phase {
 		case velerov1api.RestorePhaseCompleted:
 			phaseString = color.GreenString(phaseString)
@@ -148,18 +142,6 @@ func DescribeRestore(ctx context.Context, kbClient kbclient.Client, restore *vel
 		d.Printf("Label selector:\t%s\n", s)
 
 		d.Println()
-		if len(restore.Spec.OrLabelSelectors) == 0 {
-			s = emptyDisplay
-		} else {
-			orLabelSelectors := []string{}
-			for _, v := range restore.Spec.OrLabelSelectors {
-				orLabelSelectors = append(orLabelSelectors, metav1.FormatLabelSelector(v))
-			}
-			s = strings.Join(orLabelSelectors, " or ")
-		}
-		d.Printf("Or label selector:\t%s\n", s)
-
-		d.Println()
 		d.Printf("Restore PVs:\t%s\n", BoolPointerString(restore.Spec.RestorePVs, "false", "true", "auto"))
 
 		if len(podVolumeRestores) > 0 {
@@ -178,31 +160,14 @@ func DescribeRestore(ctx context.Context, kbClient kbclient.Client, restore *vel
 		d.Println()
 		d.Printf("Preserve Service NodePorts:\t%s\n", BoolPointerString(restore.Spec.PreserveNodePorts, "false", "true", "auto"))
 
-		if restore.Spec.UploaderConfig != nil && boolptr.IsSetToTrue(restore.Spec.UploaderConfig.WriteSparseFiles) {
-			d.Println()
-			DescribeUploaderConfigForRestore(d, restore.Spec)
-		}
-
 		d.Println()
 		describeRestoreItemOperations(ctx, kbClient, d, restore, details, insecureSkipTLSVerify, caCertFile)
 
-		if restore.Status.HookStatus != nil {
-			d.Println()
-			d.Printf("HooksAttempted: \t%d\n", restore.Status.HookStatus.HooksAttempted)
-			d.Printf("HooksFailed: \t%d\n", restore.Status.HookStatus.HooksFailed)
-		}
-
 		if details {
-			d.Println()
 			describeRestoreResourceList(ctx, kbClient, d, restore, insecureSkipTLSVerify, caCertFile)
+			d.Println()
 		}
 	})
-}
-
-// DescribeUploaderConfigForRestore describes uploader config in human-readable format
-func DescribeUploaderConfigForRestore(d *Describer, spec velerov1api.RestoreSpec) {
-	d.Printf("Uploader config:\n")
-	d.Printf("\tWrite Sparse Files:\t%T\n", boolptr.IsSetToTrue(spec.UploaderConfig.WriteSparseFiles))
 }
 
 func describeRestoreItemOperations(ctx context.Context, kbClient kbclient.Client, d *Describer, restore *velerov1api.Restore, details bool, insecureSkipTLSVerify bool, caCertPath string) {

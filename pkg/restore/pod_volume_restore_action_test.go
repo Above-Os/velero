@@ -17,6 +17,7 @@ limitations under the License.
 package restore
 
 import (
+	"context"
 	"sort"
 	"testing"
 
@@ -24,6 +25,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1api "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
@@ -32,6 +34,7 @@ import (
 	velerov1api "github.com/vmware-tanzu/velero/pkg/apis/velero/v1"
 	"github.com/vmware-tanzu/velero/pkg/builder"
 	"github.com/vmware-tanzu/velero/pkg/buildinfo"
+	velerofake "github.com/vmware-tanzu/velero/pkg/generated/clientset/versioned/fake"
 	"github.com/vmware-tanzu/velero/pkg/plugin/velero"
 	velerotest "github.com/vmware-tanzu/velero/pkg/test"
 	"github.com/vmware-tanzu/velero/pkg/util/kube"
@@ -128,7 +131,7 @@ func TestPodVolumeRestoreActionExecute(t *testing.T) {
 		name             string
 		pod              *corev1api.Pod
 		podFromBackup    *corev1api.Pod
-		podVolumeBackups []runtime.Object
+		podVolumeBackups []*velerov1api.PodVolumeBackup
 		want             *corev1api.Pod
 	}{
 		{
@@ -176,7 +179,7 @@ func TestPodVolumeRestoreActionExecute(t *testing.T) {
 					builder.WithAnnotations("snapshot.velero.io/not-used", "")).
 				InitContainers(builder.ForContainer("first-container", "").Result()).
 				Result(),
-			podVolumeBackups: []runtime.Object{
+			podVolumeBackups: []*velerov1api.PodVolumeBackup{
 				builder.ForPodVolumeBackup(veleroNs, "pvb-1").
 					PodName("my-pod").
 					PodNamespace("ns-1").
@@ -222,7 +225,7 @@ func TestPodVolumeRestoreActionExecute(t *testing.T) {
 					builder.ForVolume("vol-2").PersistentVolumeClaimSource("pvc-2").Result(),
 				).
 				Result(),
-			podVolumeBackups: []runtime.Object{
+			podVolumeBackups: []*velerov1api.PodVolumeBackup{
 				builder.ForPodVolumeBackup(veleroNs, "pvb-1").
 					PodName("my-pod").
 					PodNamespace("original-ns").
@@ -256,7 +259,12 @@ func TestPodVolumeRestoreActionExecute(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			clientset := fake.NewSimpleClientset()
-			crClient := velerotest.NewFakeControllerRuntimeClient(t, tc.podVolumeBackups...)
+			clientsetVelero := velerofake.NewSimpleClientset()
+
+			for _, podVolumeBackup := range tc.podVolumeBackups {
+				_, err := clientsetVelero.VeleroV1().PodVolumeBackups(veleroNs).Create(context.TODO(), podVolumeBackup, metav1.CreateOptions{})
+				require.NoError(t, err)
+			}
 
 			unstructuredPod, err := runtime.DefaultUnstructuredConverter.ToUnstructured(tc.pod)
 			require.NoError(t, err)
@@ -286,7 +294,7 @@ func TestPodVolumeRestoreActionExecute(t *testing.T) {
 			a := NewPodVolumeRestoreAction(
 				logrus.StandardLogger(),
 				clientset.CoreV1().ConfigMaps(veleroNs),
-				crClient,
+				clientsetVelero.VeleroV1().PodVolumeBackups(veleroNs),
 			)
 
 			// method under test
