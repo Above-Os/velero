@@ -23,7 +23,9 @@ const (
 	// BackupUIDLabel is the label key used to identify a backup by uid.
 	BackupUIDLabel = "velero.io/backup-uid"
 
-	BackupNameEx = "backup.bytetrade.io/backup-name-ex"
+	BackupJobTime = "backup.bytetrade.io/job-time"
+
+	BackupFullName = "backup.bytetrade.io/backup-fullname"
 
 	// RestoreNameLabel is the label key used to identify a restore by name.
 	RestoreNameLabel = "velero.io/restore-name"
